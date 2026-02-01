@@ -7,7 +7,8 @@ def fetch_recent_logs(limit=50):
     try:
         cur.execute("""
             SELECT timestamp, path, rule_verdict, llm_verdict,
-                risk_score, decision, deception_response
+                risk_score, decision, deception_response,
+                rule_matches, body
             FROM request_logs
             ORDER BY id DESC
             LIMIT ?

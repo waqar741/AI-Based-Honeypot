@@ -1,6 +1,8 @@
+import requests
 from fastapi import FastAPI, Request, Response
-from src.config import BACKEND_BASE_URL
-from src.gateway.forwarder import forward_request
+from fastapi.staticfiles import StaticFiles
+from urllib.parse import unquote
+
 from src.database import init_db
 from src.gateway.logger import log_request
 from src.models import RequestLog
@@ -8,120 +10,166 @@ from src.rules.engine import evaluate_rules
 from src.ai.llm_analyzer import analyze_with_llm
 from src.decision.scoring import calculate_risk
 from src.decision.policy import decide_action
-from urllib.parse import unquote
-from src.deception.signature import generate_signature
-from src.deception.cache import get_cached_response, store_fake_response
 from src.deception.signature import generate_signature
 from src.deception.cache import get_cached_response, store_fake_response
 from src.deception.ai_generator import generate_fake_response
 from src.behavior.analyzer import behavior_risk, is_login_path
+from src.dashboard.routes import router as dashboard_router
 
 app = FastAPI(title="AI Honeypot Gateway")
 
-# Initialize DB on startup
+# Initialize DB
 init_db()
 
-# Mount Static Files
-from fastapi.staticfiles import StaticFiles
+# Mount Static
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Include Dashboard Router
-from src.dashboard.routes import router as dashboard_router
+# Dashboard
 app.include_router(dashboard_router)
-
 
 @app.get("/health")
 def health():
     return {"status": "gateway alive"}
 
+# 1. Helper: Backend Forwarder
+def forward_to_backend(method, path, query, headers, body):
+    url = f"http://localhost:9000{path}"
+    
+    try:
+        # Filter headers if necessary, but forwarding all for now
+        resp = requests.request(
+            method=method,
+            url=url,
+            params=query,
+            headers=headers,
+            data=body,
+            timeout=5
+        )
+        return {
+            "content": resp.content,
+            "status": resp.status_code,
+            "headers": dict(resp.headers)
+        }
+    except Exception as e:
+        print(f"Backend connection error: {e}")
+        return {
+            "content": b"Bad Gateway",
+            "status": 502,
+            "headers": {}
+        }
+
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def gateway(path: str, request: Request):
-    method = request.method
-    headers = dict(request.headers)
-    params = dict(request.query_params)
+async def gateway_handler(request: Request, path: str):
+    
+    # ===============================
+    # 1. Extract & normalize payload
+    # ===============================
     body = await request.body()
+    # Normalize path usage: request.url.path has leading slash, path param might not.
+    # Using path for logic, request.url.path for forwarding.
+    
+    raw_payload = f"{path} {request.url.query} {body.decode(errors='ignore')}"
+    payload = unquote(raw_payload)
 
     client_ip = request.client.host if request.client else "unknown"
-    user_agent = headers.get("user-agent", "")
-    
-    # 1. Rule Evaluation
-    payload = f"{path} {params} {body.decode(errors='ignore')}"
-    payload = unquote(payload)
-    verdict, matches = evaluate_rules(payload, user_agent)
+    header_dict = dict(request.headers)
+    user_agent = header_dict.get("user-agent", "")
 
-    # 2. LLM Analysis (Layer 2)
+    # ===============================
+    # 2. Rule-based detection
+    # ===============================
+    # Ensure evaluate_rules returns strings/lists as expected
+    rule_verdict, matches = evaluate_rules(payload, user_agent)
+
+    # ===============================
+    # 3. LLM advisory (optional)
+    # ===============================
     llm_verdict = ""
     llm_latency = 0
-
-    # Only analyze if suspicious (cost/latency optimization)
-    # OR if malicious? User said "if verdict == SUSPICIOUS". 
-    # But usually MALICIOUS also warrants confirmation if we want to confirm, 
-    # but for now following strict instruction: "if verdict == SUSPICIOUS"
-    if verdict in ["SUSPICIOUS", "MALICIOUS"]:
+    
+    # "if rule_verdict == SUSPICIOUS" (Canonical requirement)
+    if rule_verdict == "SUSPICIOUS":
         try:
             llm_verdict, llm_latency = analyze_with_llm(payload)
         except Exception:
             llm_verdict = ""
             llm_latency = 0
 
-    # 3. Decision Engine (Layer 3)
-    risk = calculate_risk(verdict, ",".join(matches), llm_verdict)
-    
-    # 3.5 Behavioral Analysis (Layer 5)
-    behavior_score = behavior_risk(client_ip, path)
-    risk += behavior_score
-    
+    # ===============================
+    # 4. Risk scoring
+    # ===============================
+    risk = calculate_risk(rule_verdict, ",".join(matches), llm_verdict)
+
+    # ===============================
+    # 5. Behavioral escalation
+    # ===============================
+    risk += behavior_risk(client_ip, path)
+
+    # ===============================
+    # 6. Final decision
+    # ===============================
     decision = decide_action(risk)
     
     is_login = 1 if is_login_path(path) else 0
 
+    # Prepare Log Entry Object
     log_entry = RequestLog(
         client_ip=client_ip,
-        method=method,
+        method=request.method,
         path=path,
-        query_params=str(params),
+        query_params=str(request.query_params),
         user_agent=user_agent,
-        body=body.decode(errors="ignore")
+        body=body.decode(errors='ignore')
     )
 
-    deception_resp = ""
-
-    # 4. Deception Logic (Layer 4)
+    # ===============================
+    # 7. DECEPTION PATH (FINAL)
+    # ===============================
     if decision in ["DECEIVE", "THROTTLE"]:
         try:
             attack_type = ",".join(matches) if matches else "unknown"
-            signature = generate_signature(path, str(params), attack_type)
+            signature = generate_signature(path, str(request.query_params), attack_type)
 
-            fake = get_cached_response(signature)
-
-            if not fake:
-                fake = generate_fake_response(payload)
-                store_fake_response(signature, attack_type, fake)
-            
-            deception_resp = fake
+            fake_resp = get_cached_response(signature)
+            if not fake_resp:
+                fake_resp = generate_fake_response(payload)
+                store_fake_response(signature, attack_type, fake_resp)
         except Exception:
-            fake = "Service temporarily unavailable."
-            deception_resp = fake
-        
-        # Log immediately and Return
+             fake_resp = "Service temporarily unavailable."
+
         log_request(
             log_entry,
-            verdict=verdict,
-            matches=",".join(matches),
+            verdict=rule_verdict,
+            matches=",".join(matches) if matches else "unknown",
             llm_verdict=llm_verdict,
             llm_latency=llm_latency,
             risk_score=risk,
             decision=decision,
-            deception_response=deception_resp,
+            deception_response=fake_resp,
             is_login_attempt=is_login
         )
-        
-        return Response(content=fake, status_code=200)
 
-    # Log with all data (Normal Flow)
+        return Response(
+            content=fake_resp,
+            status_code=200,
+            media_type="text/plain"
+        )
+
+    # ===============================
+    # 8. NORMAL FORWARDING PATH
+    # ===============================
+    forwarded = forward_to_backend(
+        request.method, 
+        request.url.path, 
+        request.query_params, 
+        header_dict, 
+        body
+    )
+
     log_request(
         log_entry,
-        verdict=verdict,
+        verdict=rule_verdict,
         matches=",".join(matches),
         llm_verdict=llm_verdict,
         llm_latency=llm_latency,
@@ -130,15 +178,9 @@ async def gateway(path: str, request: Request):
         is_login_attempt=is_login
     )
 
-
-
-    target_url = f"{BACKEND_BASE_URL}/{path}"
-
-    status, resp_headers, content = forward_request(
-        method, target_url, headers, params, body
-    )
-
     return Response(
-        content=content,
-        status_code=status
+        content=forwarded["content"],
+        status_code=forwarded["status"],
+        # Exclude some headers to let FastAPI handle them (like Content-Length)
+        # headers=forwarded["headers"] 
     )

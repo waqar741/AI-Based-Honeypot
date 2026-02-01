@@ -158,6 +158,14 @@ def main():
         expected_rule="SAFE",
         expected_llm=""
     )
+    
+    send_and_check(
+        name="SSRF Attempt",
+        url=f"{GATEWAY_URL}/fetch?url=http://127.0.0.1/admin",
+        description="Internal network access",
+        expected_rule="SUSPICIOUS", # Matches http://127.0.0.1
+        expected_llm="UNSAFE"
+    )
 
     print("\n==============================")
     print("TEST: Brute Force Simulation (Behavioral)")

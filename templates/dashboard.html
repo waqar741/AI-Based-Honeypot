@@ -15,6 +15,8 @@
         <tr>
             <th>Time</th>
             <th>Path</th>
+            <th>Attack Type</th>
+            <th>Input</th>
             <th>Rule</th>
             <th>LLM</th>
             <th>Risk</th>
@@ -26,6 +28,8 @@
         <tr class="{{ log[5] }}">
             <td>{{ log[0] }}</td>
             <td>{{ log[1] }}</td>
+            <td class="matches">{{ log[7] }}</td>
+            <td class="input-body" title="{{ log[8] }}">{{ log[8][:50] }}</td>
             <td>{{ log[2] }}</td>
             <td>{{ log[3] }}</td>
             <td>{{ log[4] }}</td>
