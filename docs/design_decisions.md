@@ -2,26 +2,37 @@
 
 ## 1. Why FastAPI?
 *   **Performance**: Built on Starlette and Pydantic, it offers high performance (async/await) crucial for a proxy gateway adding minimal latency.
-*   **Concurrency**: Native support for asynchronous request processing allows handling multiple concurrent connections efficiently compared to blocking frameworks like specific Flask configurations.
+*   **Concurrency**: Native async support allows efficient handling of multiple concurrent connections.
 *   **Type Safety**: Robust data validation prevents many classes of injection attacks on the gateway itself.
 
 ## 2. Why SQLite?
-*   **Simplicity**: Deployment does not require a separate database server (like generic PostgreSQL/MySQL), reducing the "time-to-first-fix" for users.
-*   **Portability**: The database is a single file, making it easy to backup, move, or analyze logs offline.
-*   **Sufficiency**: For a single-node gateway/honeypot instance, SQLite's write throughput is sufficient for logging attack events.
+*   **Simplicity**: Deployment is zero-conf (no separate DB server), reducing complexity for users.
+*   **Portability**: The database is a single file, easily backed up or moved for offline analysis.
+*   **Sufficiency**: For a single-node gateway/honeypot instance, SQLite's write throughput is adequate for attack logging.
 
-## 3. Why Local LLM (e.g., Ollama/Llama)?
-*   **Privacy**: Sensitive traffic data (potentially containing PII or passwords) is never sent to a third-party API (like OpenAI).
+## 3. Why Local LLM (e.g., Ollama)?
+*   **Privacy**: Sensitive traffic data is never sent to a third-party API.
 *   **Cost**: No per-token usage fees.
-*   **Latency**: Eliminates network round-trips to external AI services, keeping decisions faster.
-*   **Control**: Allows fine-tuning the model specific to security log analysis without API restrictions.
+*   **Latency**: Eliminates network round-trips to external AI services.
+*   **Control**: Allows fine-tuning the model for security logs without API restrictions.
 
 ## 4. Why Deception > Blocking?
-*   **Intelligence**: Blocking an attacker tells them they were detected, prompting them to change tactics. Deception keeps them completely unaware.
-*   **Resource Wasting**: By engaging the attacker in a fake environment, we waste their time and resources that could be used against real targets.
-*   **Attribution**: Longer engagement sessions provide more data (IPs, browser fingerprints, behavioral patterns) for identifying the threat actor.
+*   **Intelligence**: Deception keeps the attacker unaware they are detected.
+*   **Resource Wasting**: Engages the attacker in a fake environment, wasting their time.
+*   **Attribution**: Longer engagement sessions provide more forensic data (IPs, tools, behavior).
 
-## 5. Why Gateway Architecture?
-*   **Agnostic Protection**: Can protect legacy apps, modern microservices, or static sites without requiring code changes in the backend application.
-*   **Centralization**: Provides a single point of enforcement for security policies across multiple backend services.
-*   **Isolation**: If the deception layer crashes or is compromised, the real backend remains isolated and untouched.
+## 5. Gateway Architecture
+*   **Agnostic Protection**: Protects any backend (FastAPI, Flask, Node.js) without code changes.
+*   **Isolation**: If the deception layer is compromised, the real backend remains safe.
+
+## 6. Logic Encapsulation (SecurityFilter Class)
+*   **Why Class-based?**: We moved from global regex lists to a `SecurityFilter` class to encapsulate distinct pattern matching methods (`check_input`, `check_hpp`). This improves maintainability and allows stateful checks if needed in the future.
+
+## 7. Behavioral Analysis Layer
+*   **Why needed?**: Static rules miss "slow and low" attacks or valid credentials being brute-forced.
+*   **Mechanism**: We track rate limits and login failures *per IP*. This adds a dynamic risk score that static regex cannot provide.
+
+## 8. Strict 8-Step Pipeline
+*   **Why?**: To ensure deterministic processing. Every request MUST go through:
+    `Normalize -> Rule -> LLM -> Risk -> Behavior -> Decision -> Deception -> Forward`.
+    This prevents "fail-open" scenarios where a check might be skipped accidentally.
