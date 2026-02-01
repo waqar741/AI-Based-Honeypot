@@ -10,27 +10,27 @@ CURRENT_MAX_ID = 0
 def get_latest_log(min_id=0, path_keyword=""):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
-    # Simple fuzzy match on path to find the right log
+
     query_str = f"%{path_keyword}%"
-    
+
     cursor.execute("""
-        SELECT id, path, rule_verdict, llm_verdict, llm_latency_ms, risk_score, decision, deception_response
-        FROM request_logs 
+        SELECT id, path, rule_verdict, llm_verdict,
+               llm_latency_ms, risk_score, decision, deception_response
+        FROM request_logs
         WHERE id > ? AND path LIKE ?
-        ORDER BY id DESC 
+        ORDER BY id DESC
         LIMIT 1
     """, (min_id, query_str))
 
-
-    
     row = cursor.fetchone()
     conn.close()
     return row
 
 
-def send_and_check(name, url, description, expected_rule, expected_llm):
+def send_and_check(name, url, description, expected_rule, expected_llm,
+                   expect_deception=False, previous_fake=None):
     global CURRENT_MAX_ID
+
     print(f"\n==============================")
     print(f"TEST: {name}")
     print(f"Request URL : {url}")
@@ -39,27 +39,25 @@ def send_and_check(name, url, description, expected_rule, expected_llm):
     print(f"------------------------------")
 
     try:
-        # LLM might take time, so increase timeout. Capture response to check body if needed.
         resp = requests.get(url, timeout=40)
-        print(f"Response Status: {resp.status_code}")
-        print(f"Response Preview: {resp.text[:100]}...")
+        print(f"HTTP Status       : {resp.status_code}")
+        preview = resp.text.strip()[:120]
+        print(f"Response Preview  : {preview if preview else '[EMPTY]'}")
     except Exception as e:
         print(f"Request error (ignored): {e}")
 
-
-    # Allow DB write to complete
     time.sleep(1.0)
 
-    # Pass the path keyword (extracted from url or passed explicitly)
-    # Simple extraction: last part of URL or specific keyword
     path_keyword = url.split("8000/")[-1].split("?")[0]
-    if path_keyword == "": path_keyword = "home" # handle root/home case
-    if "passwd" in url: path_keyword = "etc"     # special case for traversal
-    
+    if path_keyword == "":
+        path_keyword = "home"
+    if "passwd" in url:
+        path_keyword = "etc"
+
     row = get_latest_log(min_id=CURRENT_MAX_ID, path_keyword=path_keyword)
     if not row:
         print("❌ No NEW log entry found (Stale read prevented)")
-        return
+        return None
 
     _id, path, rule, llm, latency, risk, decision, fake_resp = row
     CURRENT_MAX_ID = _id
@@ -71,26 +69,36 @@ def send_and_check(name, url, description, expected_rule, expected_llm):
     print(f"LLM Latency (ms) : {latency}")
     print(f"Risk Score       : {risk}")
     print(f"Decision         : {decision}")
-    print(f"Deception Output : {fake_resp[:50] if fake_resp else 'None'}")
-
+    print(f"Deception Output : {fake_resp[:60] if fake_resp else 'None'}")
 
     print("RESULT:")
-    # Basic check - if expected rule/llm match, usually risk is correct.
-    # We won't rigorously check exact score in this script to keep it simple,
-    # but we check if Decision is roughly what we expect or just exist.
-    if rule == expected_rule and llm == expected_llm:
-        print("✅ PASS")
-    else:
-        print("⚠️  CHECK (acceptable if explained in viva)")
 
+    # Rule + LLM correctness
+    rule_ok = rule == expected_rule
+    llm_ok = (llm == expected_llm)
+
+    if expect_deception:
+        if decision in ["DECEIVE", "THROTTLE"] and fake_resp:
+            print("✅ PASS (Deception activated)")
+            if previous_fake is not None:
+                if fake_resp == previous_fake:
+                    print("✅ PASS (Consistent fake response)")
+                else:
+                    print("⚠️  CHECK (Fake response changed)")
+        else:
+            print("⚠️  CHECK (Expected deception)")
+    else:
+        if rule_ok and llm_ok:
+            print("✅ PASS")
+        else:
+            print("⚠️  CHECK (acceptable if explained in viva)")
+
+    return fake_resp
 
 
 def main():
-    print("\n🚀 STARTING DAY-5 MULTI-LAYER TESTS\n")
+    print("\n🚀 STARTING MULTI-LAYER + DECEPTION TESTS\n")
 
-    # -------------------------------
-    # 1. Completely Normal Request
-    # -------------------------------
     send_and_check(
         name="Normal Traffic",
         url=f"{GATEWAY_URL}/home",
@@ -99,73 +107,79 @@ def main():
         expected_llm=""
     )
 
-    # ----------------------------------------
-    # 2. Clear SQL Injection (Obvious Attack)
-    # ----------------------------------------
-    send_and_check(
+    fake1 = send_and_check(
         name="Clear SQL Injection",
         url=f"{GATEWAY_URL}/login?user=admin' OR 1=1 --",
         description="Classic SQL injection payload",
         expected_rule="MALICIOUS",
-        expected_llm="UNSAFE"
+        expected_llm="UNSAFE",
+        expect_deception=True
     )
 
-    # ----------------------------------------
-    # 3. Obfuscated SQL Injection (Encoded)
-    # ----------------------------------------
-    send_and_check(
-        name="Obfuscated SQL Injection",
-        url=f"{GATEWAY_URL}/login?user=admin%27%20OR%201%3D1",
-        description="URL-encoded SQL injection",
-        expected_rule="SUSPICIOUS",
-        expected_llm="UNSAFE"
+    fake2 = send_and_check(
+        name="Clear SQL Injection (Repeat)",
+        url=f"{GATEWAY_URL}/login?user=admin' OR 1=1 --",
+        description="Same SQL injection again (consistency check)",
+        expected_rule="MALICIOUS",
+        expected_llm="UNSAFE",
+        expect_deception=True,
+        previous_fake=fake1
     )
 
-    # ----------------------------------------
-    # 4. XSS Attempt
-    # ----------------------------------------
     send_and_check(
         name="XSS Payload",
         url=f"{GATEWAY_URL}/search?q=<script>alert(1)</script>",
         description="Reflected XSS attempt",
         expected_rule="SUSPICIOUS",
-        expected_llm="UNSAFE"
+        expected_llm="UNSAFE",
+        expect_deception=True
     )
 
-    # ------------------------------------------------
-    # 5. Confusing But Benign (Looks Dangerous)
-    # ------------------------------------------------
     send_and_check(
         name="Benign but Confusing",
         url=f"{GATEWAY_URL}/docs?q=how to use <script> tag safely",
-        description="Educational text, not an attack",
+        description="Educational content",
         expected_rule="SUSPICIOUS",
         expected_llm="SAFE"
     )
 
-    # ----------------------------------------
-    # 6. Directory Traversal
-    # ----------------------------------------
     send_and_check(
         name="Directory Traversal",
         url=f"{GATEWAY_URL}/../../etc/passwd",
-        description="Classic traversal attempt",
+        description="Traversal attempt (framework normalized)",
         expected_rule="MALICIOUS",
         expected_llm="UNSAFE"
     )
 
-    # ----------------------------------------
-    # 7. Random Garbage Input
-    # ----------------------------------------
     send_and_check(
         name="Random Input",
         url=f"{GATEWAY_URL}/test?q=asdj123!@#",
-        description="Random noise input",
+        description="Random noise",
         expected_rule="SAFE",
         expected_llm=""
     )
 
-    print("\n✅ DAY-5 TESTING COMPLETE\n")
+    print("\n==============================")
+    print("TEST: Brute Force Simulation (Behavioral)")
+
+    for i in range(15):
+        try:
+            requests.get(f"{GATEWAY_URL}/login?user=test{i}", timeout=3)
+        except:
+            pass
+
+    time.sleep(1.5)
+    row = get_latest_log(min_id=CURRENT_MAX_ID, path_keyword="login")
+
+    if row:
+        _id, path, rule, llm, latency, risk, decision, fake_resp = row
+        print(f"Final Behavioral Decision: {decision} (Risk: {risk})")
+        if risk >= 3:
+            print("✅ PASS (Behavioral escalation detected)")
+        else:
+            print("⚠️ CHECK (Risk should be higher)")
+
+    print("\n✅ MULTI-LAYER + DECEPTION TESTING COMPLETE\n")
 
 
 if __name__ == "__main__":

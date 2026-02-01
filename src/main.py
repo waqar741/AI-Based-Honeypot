@@ -11,12 +11,24 @@ from src.decision.policy import decide_action
 from urllib.parse import unquote
 from src.deception.signature import generate_signature
 from src.deception.cache import get_cached_response, store_fake_response
+from src.deception.signature import generate_signature
+from src.deception.cache import get_cached_response, store_fake_response
 from src.deception.ai_generator import generate_fake_response
+from src.behavior.analyzer import behavior_risk, is_login_path
 
 app = FastAPI(title="AI Honeypot Gateway")
 
 # Initialize DB on startup
 init_db()
+
+# Mount Static Files
+from fastapi.staticfiles import StaticFiles
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Include Dashboard Router
+from src.dashboard.routes import router as dashboard_router
+app.include_router(dashboard_router)
+
 
 @app.get("/health")
 def health():
@@ -54,7 +66,14 @@ async def gateway(path: str, request: Request):
 
     # 3. Decision Engine (Layer 3)
     risk = calculate_risk(verdict, ",".join(matches), llm_verdict)
+    
+    # 3.5 Behavioral Analysis (Layer 5)
+    behavior_score = behavior_risk(client_ip, path)
+    risk += behavior_score
+    
     decision = decide_action(risk)
+    
+    is_login = 1 if is_login_path(path) else 0
 
     log_entry = RequestLog(
         client_ip=client_ip,
@@ -69,16 +88,20 @@ async def gateway(path: str, request: Request):
 
     # 4. Deception Logic (Layer 4)
     if decision in ["DECEIVE", "THROTTLE"]:
-        attack_type = ",".join(matches) if matches else "unknown"
-        signature = generate_signature(path, str(params), attack_type)
+        try:
+            attack_type = ",".join(matches) if matches else "unknown"
+            signature = generate_signature(path, str(params), attack_type)
 
-        fake = get_cached_response(signature)
+            fake = get_cached_response(signature)
 
-        if not fake:
-            fake = generate_fake_response(payload)
-            store_fake_response(signature, attack_type, fake)
-        
-        deception_resp = fake
+            if not fake:
+                fake = generate_fake_response(payload)
+                store_fake_response(signature, attack_type, fake)
+            
+            deception_resp = fake
+        except Exception:
+            fake = "Service temporarily unavailable."
+            deception_resp = fake
         
         # Log immediately and Return
         log_request(
@@ -89,7 +112,8 @@ async def gateway(path: str, request: Request):
             llm_latency=llm_latency,
             risk_score=risk,
             decision=decision,
-            deception_response=deception_resp
+            deception_response=deception_resp,
+            is_login_attempt=is_login
         )
         
         return Response(content=fake, status_code=200)
@@ -102,7 +126,8 @@ async def gateway(path: str, request: Request):
         llm_verdict=llm_verdict,
         llm_latency=llm_latency,
         risk_score=risk,
-        decision=decision
+        decision=decision,
+        is_login_attempt=is_login
     )
 
 

@@ -65,6 +65,12 @@ def init_db():
         pass
 
 
+    # Migration 6: Behavioral Analysis
+    try:
+        cursor.execute("ALTER TABLE request_logs ADD COLUMN is_login_attempt INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
 
     conn.commit()
     conn.close()

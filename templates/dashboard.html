@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>AI Honeypot Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <meta http-equiv="refresh" content="5"> <!-- Auto refresh every 5s -->
+</head>
+
+<body>
+
+    <h1>AI Adaptive Honeypot – Monitoring Dashboard</h1>
+
+    <table>
+        <tr>
+            <th>Time</th>
+            <th>Path</th>
+            <th>Rule</th>
+            <th>LLM</th>
+            <th>Risk</th>
+            <th>Decision</th>
+            <th>Deception Response</th>
+        </tr>
+
+        {% for log in logs %}
+        <tr class="{{ log[5] }}">
+            <td>{{ log[0] }}</td>
+            <td>{{ log[1] }}</td>
+            <td>{{ log[2] }}</td>
+            <td>{{ log[3] }}</td>
+            <td>{{ log[4] }}</td>
+            <td>{{ log[5] }}</td>
+            <td class="deception-text" title="{{ log[6] }}">{{ log[6] if log[6] else '' }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+</body>
+
+</html>

@@ -1,0 +1,63 @@
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 20px;
+    background-color: #f9f9f9;
+}
+
+h1 {
+    color: #333;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    background-color: white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+th, td {
+    border: 1px solid #ddd;
+    padding: 10px;
+    font-size: 14px;
+    text-align: left;
+}
+
+th {
+    background-color: #3f51b5;
+    color: white;
+}
+
+tr:nth-child(even) {
+    background-color: #f2f2f2;
+}
+
+/* Decision Color Coding */
+.ALLOW {
+    background-color: #e8f5e9 !important; /* Light Green */
+    border-left: 5px solid #4caf50;
+}
+
+.MONITOR {
+    background-color: #fffde7 !important; /* Light Yellow */
+    border-left: 5px solid #ffeb3b;
+}
+
+.DECEIVE {
+    background-color: #fff3e0 !important; /* Light Orange */
+    border-left: 5px solid #ff9800;
+}
+
+.THROTTLE {
+    background-color: #ffebee !important; /* Light Red */
+    border-left: 5px solid #f44336;
+}
+
+.deception-text {
+    font-family: monospace;
+    font-size: 12px;
+    color: #555;
+    max-width: 300px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
