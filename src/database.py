@@ -26,12 +26,19 @@ def init_db():
         )
     """)
     
-    # Simple migration: Try adding columns, ignore if they exist
+    # Migration 1: Rule Engine
     try:
         cursor.execute("ALTER TABLE request_logs ADD COLUMN rule_verdict TEXT")
         cursor.execute("ALTER TABLE request_logs ADD COLUMN rule_matches TEXT")
     except sqlite3.OperationalError:
-        pass # Columns likely exist
+        pass 
+
+    # Migration 2: LLM Integration
+    try:
+        cursor.execute("ALTER TABLE request_logs ADD COLUMN llm_verdict TEXT")
+        cursor.execute("ALTER TABLE request_logs ADD COLUMN llm_latency_ms INTEGER")
+    except sqlite3.OperationalError:
+        pass
 
     conn.commit()
     conn.close()

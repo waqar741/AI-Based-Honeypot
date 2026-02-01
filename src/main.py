@@ -5,6 +5,7 @@ from src.database import init_db
 from src.gateway.logger import log_request
 from src.models import RequestLog
 from src.rules.engine import evaluate_rules
+from src.ai.llm_analyzer import analyze_with_llm
 
 app = FastAPI(title="AI Honeypot Gateway")
 
@@ -25,9 +26,20 @@ async def gateway(path: str, request: Request):
     client_ip = request.client.host if request.client else "unknown"
     user_agent = headers.get("user-agent", "")
     
-    # Classify Request
+    # 1. Rule Evaluation
     payload = f"{path} {params} {body.decode(errors='ignore')}"
     verdict, matches = evaluate_rules(payload, user_agent)
+
+    # 2. LLM Analysis (Layer 2)
+    llm_verdict = ""
+    llm_latency = 0
+
+    # Only analyze if suspicious (cost/latency optimization)
+    # OR if malicious? User said "if verdict == SUSPICIOUS". 
+    # But usually MALICIOUS also warrants confirmation if we want to confirm, 
+    # but for now following strict instruction: "if verdict == SUSPICIOUS"
+    if verdict in ["SUSPICIOUS", "MALICIOUS"]:
+        llm_verdict, llm_latency = analyze_with_llm(payload)
 
     log_entry = RequestLog(
         client_ip=client_ip,
@@ -38,11 +50,13 @@ async def gateway(path: str, request: Request):
         body=body.decode(errors="ignore")
     )
 
-    # Log with verdict
+    # Log with all data
     log_request(
         log_entry,
         verdict=verdict,
-        matches=",".join(matches)
+        matches=",".join(matches),
+        llm_verdict=llm_verdict,
+        llm_latency=llm_latency
     )
 
     target_url = f"{BACKEND_BASE_URL}/{path}"
