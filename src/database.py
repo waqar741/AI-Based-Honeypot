@@ -47,6 +47,24 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Migration 4: Deception Layer (Table)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fake_responses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            attack_signature TEXT UNIQUE,
+            attack_type TEXT,
+            fake_response TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Migration 5: Deception Logging
+    try:
+        cursor.execute("ALTER TABLE request_logs ADD COLUMN deception_response TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+
 
     conn.commit()
     conn.close()

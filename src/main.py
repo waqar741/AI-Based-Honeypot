@@ -9,6 +9,9 @@ from src.ai.llm_analyzer import analyze_with_llm
 from src.decision.scoring import calculate_risk
 from src.decision.policy import decide_action
 from urllib.parse import unquote
+from src.deception.signature import generate_signature
+from src.deception.cache import get_cached_response, store_fake_response
+from src.deception.ai_generator import generate_fake_response
 
 app = FastAPI(title="AI Honeypot Gateway")
 
@@ -62,7 +65,36 @@ async def gateway(path: str, request: Request):
         body=body.decode(errors="ignore")
     )
 
-    # Log with all data
+    deception_resp = ""
+
+    # 4. Deception Logic (Layer 4)
+    if decision in ["DECEIVE", "THROTTLE"]:
+        attack_type = ",".join(matches) if matches else "unknown"
+        signature = generate_signature(path, str(params), attack_type)
+
+        fake = get_cached_response(signature)
+
+        if not fake:
+            fake = generate_fake_response(payload)
+            store_fake_response(signature, attack_type, fake)
+        
+        deception_resp = fake
+        
+        # Log immediately and Return
+        log_request(
+            log_entry,
+            verdict=verdict,
+            matches=",".join(matches),
+            llm_verdict=llm_verdict,
+            llm_latency=llm_latency,
+            risk_score=risk,
+            decision=decision,
+            deception_response=deception_resp
+        )
+        
+        return Response(content=fake, status_code=200)
+
+    # Log with all data (Normal Flow)
     log_request(
         log_entry,
         verdict=verdict,
@@ -72,6 +104,7 @@ async def gateway(path: str, request: Request):
         risk_score=risk,
         decision=decision
     )
+
 
 
     target_url = f"{BACKEND_BASE_URL}/{path}"

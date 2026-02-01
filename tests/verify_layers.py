@@ -15,12 +15,13 @@ def get_latest_log(min_id=0, path_keyword=""):
     query_str = f"%{path_keyword}%"
     
     cursor.execute("""
-        SELECT id, path, rule_verdict, llm_verdict, llm_latency_ms, risk_score, decision
+        SELECT id, path, rule_verdict, llm_verdict, llm_latency_ms, risk_score, decision, deception_response
         FROM request_logs 
         WHERE id > ? AND path LIKE ?
         ORDER BY id DESC 
         LIMIT 1
     """, (min_id, query_str))
+
 
     
     row = cursor.fetchone()
@@ -38,10 +39,13 @@ def send_and_check(name, url, description, expected_rule, expected_llm):
     print(f"------------------------------")
 
     try:
-        # LLM might take time, so increase timeout
-        requests.get(url, timeout=40)
+        # LLM might take time, so increase timeout. Capture response to check body if needed.
+        resp = requests.get(url, timeout=40)
+        print(f"Response Status: {resp.status_code}")
+        print(f"Response Preview: {resp.text[:100]}...")
     except Exception as e:
         print(f"Request error (ignored): {e}")
+
 
     # Allow DB write to complete
     time.sleep(1.0)
@@ -57,7 +61,7 @@ def send_and_check(name, url, description, expected_rule, expected_llm):
         print("❌ No NEW log entry found (Stale read prevented)")
         return
 
-    _id, path, rule, llm, latency, risk, decision = row
+    _id, path, rule, llm, latency, risk, decision, fake_resp = row
     CURRENT_MAX_ID = _id
 
     print(f"DB Log ID        : {_id}")
@@ -67,6 +71,8 @@ def send_and_check(name, url, description, expected_rule, expected_llm):
     print(f"LLM Latency (ms) : {latency}")
     print(f"Risk Score       : {risk}")
     print(f"Decision         : {decision}")
+    print(f"Deception Output : {fake_resp[:50] if fake_resp else 'None'}")
+
 
     print("RESULT:")
     # Basic check - if expected rule/llm match, usually risk is correct.
