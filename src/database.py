@@ -40,5 +40,13 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Migration 3: Decision Engine
+    try:
+        cursor.execute("ALTER TABLE request_logs ADD COLUMN risk_score INTEGER")
+        cursor.execute("ALTER TABLE request_logs ADD COLUMN decision TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+
     conn.commit()
     conn.close()

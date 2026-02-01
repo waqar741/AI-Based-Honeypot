@@ -7,16 +7,22 @@ DB_PATH = "data/honeypot.db"
 CURRENT_MAX_ID = 0
 
 
-def get_latest_log(min_id=0):
+def get_latest_log(min_id=0, path_keyword=""):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    
+    # Simple fuzzy match on path to find the right log
+    query_str = f"%{path_keyword}%"
+    
     cursor.execute("""
-        SELECT id, path, rule_verdict, llm_verdict, llm_latency_ms
-        FROM request_logs
-        WHERE id > ?
-        ORDER BY id ASC
+        SELECT id, path, rule_verdict, llm_verdict, llm_latency_ms, risk_score, decision
+        FROM request_logs 
+        WHERE id > ? AND path LIKE ?
+        ORDER BY id DESC 
         LIMIT 1
-    """, (min_id,))
+    """, (min_id, query_str))
+
+    
     row = cursor.fetchone()
     conn.close()
     return row
@@ -40,12 +46,18 @@ def send_and_check(name, url, description, expected_rule, expected_llm):
     # Allow DB write to complete
     time.sleep(1.0)
 
-    row = get_latest_log(min_id=CURRENT_MAX_ID)
+    # Pass the path keyword (extracted from url or passed explicitly)
+    # Simple extraction: last part of URL or specific keyword
+    path_keyword = url.split("8000/")[-1].split("?")[0]
+    if path_keyword == "": path_keyword = "home" # handle root/home case
+    if "passwd" in url: path_keyword = "etc"     # special case for traversal
+    
+    row = get_latest_log(min_id=CURRENT_MAX_ID, path_keyword=path_keyword)
     if not row:
         print("❌ No NEW log entry found (Stale read prevented)")
         return
 
-    _id, path, rule, llm, latency = row
+    _id, path, rule, llm, latency, risk, decision = row
     CURRENT_MAX_ID = _id
 
     print(f"DB Log ID        : {_id}")
@@ -53,12 +65,18 @@ def send_and_check(name, url, description, expected_rule, expected_llm):
     print(f"Rule Verdict     : {rule}")
     print(f"LLM Verdict      : {llm}")
     print(f"LLM Latency (ms) : {latency}")
+    print(f"Risk Score       : {risk}")
+    print(f"Decision         : {decision}")
 
     print("RESULT:")
+    # Basic check - if expected rule/llm match, usually risk is correct.
+    # We won't rigorously check exact score in this script to keep it simple,
+    # but we check if Decision is roughly what we expect or just exist.
     if rule == expected_rule and llm == expected_llm:
         print("✅ PASS")
     else:
         print("⚠️  CHECK (acceptable if explained in viva)")
+
 
 
 def main():

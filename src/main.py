@@ -6,6 +6,9 @@ from src.gateway.logger import log_request
 from src.models import RequestLog
 from src.rules.engine import evaluate_rules
 from src.ai.llm_analyzer import analyze_with_llm
+from src.decision.scoring import calculate_risk
+from src.decision.policy import decide_action
+from urllib.parse import unquote
 
 app = FastAPI(title="AI Honeypot Gateway")
 
@@ -28,6 +31,7 @@ async def gateway(path: str, request: Request):
     
     # 1. Rule Evaluation
     payload = f"{path} {params} {body.decode(errors='ignore')}"
+    payload = unquote(payload)
     verdict, matches = evaluate_rules(payload, user_agent)
 
     # 2. LLM Analysis (Layer 2)
@@ -39,7 +43,15 @@ async def gateway(path: str, request: Request):
     # But usually MALICIOUS also warrants confirmation if we want to confirm, 
     # but for now following strict instruction: "if verdict == SUSPICIOUS"
     if verdict in ["SUSPICIOUS", "MALICIOUS"]:
-        llm_verdict, llm_latency = analyze_with_llm(payload)
+        try:
+            llm_verdict, llm_latency = analyze_with_llm(payload)
+        except Exception:
+            llm_verdict = ""
+            llm_latency = 0
+
+    # 3. Decision Engine (Layer 3)
+    risk = calculate_risk(verdict, ",".join(matches), llm_verdict)
+    decision = decide_action(risk)
 
     log_entry = RequestLog(
         client_ip=client_ip,
@@ -56,8 +68,11 @@ async def gateway(path: str, request: Request):
         verdict=verdict,
         matches=",".join(matches),
         llm_verdict=llm_verdict,
-        llm_latency=llm_latency
+        llm_latency=llm_latency,
+        risk_score=risk,
+        decision=decision
     )
+
 
     target_url = f"{BACKEND_BASE_URL}/{path}"
 

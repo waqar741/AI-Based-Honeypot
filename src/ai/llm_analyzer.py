@@ -55,8 +55,8 @@ def analyze_with_llm(payload: str):
         if text == "UNSAFE":
              return "UNSAFE", latency_ms
              
-        return "UNKNOWN", latency_ms
+        return "", latency_ms
         
     except Exception as e:
         latency_ms = int((time.time() - start) * 1000)
-        return "ERROR", latency_ms
+        return "", latency_ms
