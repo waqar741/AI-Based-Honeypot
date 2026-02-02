@@ -1,2 +1,2 @@
 # config.py
-BACKEND_BASE_URL = "http://localhost:9000"
+BACKEND_BASE_URL = "https://ebzvpwqnjtcczlkchwrg.supabase.co" 
